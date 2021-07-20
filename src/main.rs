@@ -50,36 +50,65 @@ fn main() {
     execute!(stdout, terminal::EnterAlternateScreen, cursor::Hide).unwrap();
     terminal::enable_raw_mode().unwrap();
 
+    let mut screen_space = terminal::size().unwrap();
+    let mut last_frame: Vec<Vec<Color>> = vec![vec![Color::Rgb{r: 0, g: 0, b: 0}; screen_space.1 as usize]; screen_space.0 as usize];
+
+    for x in 0..screen_space.0 {
+        for y in 0..screen_space.1 {
+            queue!(stdout, cursor::MoveTo(x, y), SetBackgroundColor(Color::Rgb{r: 0, g: 0, b: 0}), Print(" ".to_string())).unwrap();
+        }
+    }
+    stdout.flush().unwrap();
+
     'game: loop {
         let start_time = Instant::now();
-        let screen_space = terminal::size().unwrap();
 
         for x in 0..screen_space.0 {
+            // Create ray for each column and get distance to wall
             let mut ray: (f64, f64) = player.position();
             let mut angle: f64 = player.direction() + (player.horizontal_fov() * (x as f64 / (screen_space.0 - 1) as f64)) - (player.horizontal_fov() / 2.0);
-            while map[ray] == ' ' {
+            let mut ray_distance: f64 = 0.0;
+            while map[ray] == ' ' && ray_distance < player.view_distance()   {
                 ray.0 += angle.cos() * 0.1;
                 ray.1 += angle.sin() * 0.1;
+                ray_distance += 0.1;
             }
-            let ray_distance: f64 = ((ray.0 - player.position().0).powf(2.0) + (ray.1 - player.position().1).powf(2.0)).sqrt();
+
+            // Calculate in advance for color calculations later
+            let brightness_multiplier: f64 = 1.0 - (ray_distance / player.view_distance());
+            let wall_color: Color = Color::Rgb{
+                r: (255.0 * brightness_multiplier) as u8,
+                g: (128.0 * brightness_multiplier) as u8,
+                b: (128.0 * brightness_multiplier) as u8
+            };
 
             for y in 0..screen_space.1 {
+                // Calculate wall height based on y row
                 angle = (player.vertical_fov() * (y as f64 / (screen_space.1 - 1) as f64)) - (player.vertical_fov() / 2.0);
                 let height: f64 = angle.sin() * ray_distance;
+
+                // Draw color
+                let draw_color: Color;
                 if height < 1.0 && height > -1.0 && ray_distance < player.view_distance() {
-                    let brightness_multiplier: f64 = 1.0 - (ray_distance / player.view_distance());
-                    queue!(stdout, cursor::MoveTo(x, y), SetBackgroundColor(Color::Rgb{r: (255.0 * brightness_multiplier) as u8, g: (128.0 * brightness_multiplier) as u8, b: (128.0 * brightness_multiplier) as u8}), Print(" ".to_string())).unwrap();
+                    draw_color = wall_color;
                 } else {
-                    queue!(stdout, cursor::MoveTo(x, y), SetBackgroundColor(Color::Rgb{r: 0, g: 0, b: 0}), Print(" ".to_string())).unwrap();
+                    draw_color = Color::Rgb{r: 0, g: 0, b: 0};
+                }
+                if last_frame[x as usize][y as usize] != draw_color {
+                    queue!(stdout, cursor::MoveTo(x, y), SetBackgroundColor(draw_color), Print(" ".to_string())).unwrap();
+                    last_frame[x as usize][y as usize] = draw_color;
                 }
             }
         }
+        
+        // Execute all queued changed
         stdout.flush().unwrap();
 
+        // Poll for events and handle FPS
         let mut frame_duration = start_time.elapsed();
-
-        while frame_duration < Duration::from_millis(32) {
-            if poll(Duration::from_millis(32) - frame_duration).unwrap() {
+        let frame_time = Duration::from_millis(16);
+        while frame_duration < frame_time {
+            if poll(frame_time - frame_duration).unwrap() {
                 match read().unwrap() {
                     Event::Key(key_event) => {
                         match key_event {
@@ -93,40 +122,15 @@ fn main() {
                             _ => {}
                         }
                     },
+                    Event::Resize(columns, rows) => screen_space = (columns, rows),
                     _ => {}
                 }
-                frame_duration = start_time.elapsed()
+                frame_duration = start_time.elapsed();
             }
         }
-
-            /*
-            let e = term.get_event(Duration::new(0, 0)).unwrap();
-            match e {
-                Some(Key('\u{3}')) | Some(Key('\u{1a}')) | Some(Key('\u{11}'))  => break 'game,
-                Some(Key('w')) => player.move_camera_relative(( 0.05, 0.0)),
-                Some(Key('s')) => player.move_camera_relative((-0.05, 0.0)),
-                Some(Key('a')) => player.move_camera_relative(( 0.0, 0.05)),
-                Some(Key('d')) => player.move_camera_relative(( 0.0,-0.05)),
-                Some(Key('\u{1b}')) => {//1b [ C, D, B, A
-                    let e1 = term.get_event(Duration::from_secs(0)).unwrap();
-                    let e2 = term.get_event(Duration::from_secs(0)).unwrap();
-                    match e1 {
-                        Some(Key('[')) => {
-                            match e2 {
-                                Some(Key('C')) => player.turn( 0.1),
-                                Some(Key('D')) => player.turn(-0.1),
-                                Some(Key('B')) => {}, // Look down,
-                                Some(Key('A')) => {}, // Look up,
-                                _ => {},
-                            }
-                        }
-                        _ => {},
-                    }
-                }
-                _ => {},
-            }
-            */
     }
+
+    // Clean up terminal
     terminal::disable_raw_mode().unwrap();
     execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen).unwrap();
 }
