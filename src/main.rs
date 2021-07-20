@@ -1,5 +1,6 @@
 mod map;
 mod player;
+mod texture;
 
 use std::io::{Write,
     stdout
@@ -23,6 +24,7 @@ use crossterm::{
     }
 };
 use map::Map;
+use texture::*;
 use player::Player;
 use std::time::{Duration,
     Instant
@@ -33,6 +35,7 @@ fn main() {
     let mut stdout = stdout();
     let mut map = Map::new(15, 15, ' ');
     let mut player = Player::new((7.0, 7.0), PI / 4.0, PI / 3.0, 15.0);
+    let mut frame_durations: Vec<Duration> = Vec::new();
 
     for x in 0..map.width {
         map[(x, 0)] = '#';
@@ -76,16 +79,14 @@ fn main() {
 
             // Calculate in advance for color calculations later
             let brightness_multiplier: f64 = 1.0 - (ray_distance / player.view_distance());
-            let wall_color: Color = Color::Rgb{
-                r: (255.0 * brightness_multiplier) as u8,
-                g: (128.0 * brightness_multiplier) as u8,
-                b: (128.0 * brightness_multiplier) as u8
-            };
 
             for y in 0..screen_space.1 {
                 // Calculate wall height based on y row
                 angle = (player.vertical_fov() * (y as f64 / (screen_space.1 - 1) as f64)) - (player.vertical_fov() / 2.0);
                 let height: f64 = angle.sin() * ray_distance;
+
+                // Wall texture
+                let wall_color: Color = get_color(255, 128, 128, brightness_multiplier, ray, height);
 
                 // Draw color
                 let draw_color: Color;
@@ -106,7 +107,8 @@ fn main() {
 
         // Poll for events and handle FPS
         let mut frame_duration = start_time.elapsed();
-        let frame_time = Duration::from_millis(16);
+        frame_durations.push(frame_duration);
+        let frame_time = Duration::from_millis(32);
         while frame_duration < frame_time {
             if poll(frame_time - frame_duration).unwrap() {
                 match read().unwrap() {
@@ -122,15 +124,29 @@ fn main() {
                             _ => {}
                         }
                     },
-                    Event::Resize(columns, rows) => screen_space = (columns, rows),
+                    Event::Resize(columns, rows) => {
+                        screen_space = (columns, rows);
+                        last_frame = vec![vec![Color::Rgb{r: 0, g: 0, b: 0}; screen_space.1 as usize]; screen_space.0 as usize];
+                        for x in 0..screen_space.0 {
+                            for y in 0..screen_space.1 {
+                                queue!(stdout, cursor::MoveTo(x, y), SetBackgroundColor(Color::Rgb{r: 0, g: 0, b: 0}), Print(" ".to_string())).unwrap();
+                            }
+                        }
+                        stdout.flush().unwrap();
+                    }
                     _ => {}
                 }
-                frame_duration = start_time.elapsed();
             }
+            frame_duration = start_time.elapsed();
         }
     }
 
     // Clean up terminal
     terminal::disable_raw_mode().unwrap();
     execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen).unwrap();
+
+    // Log frames
+    for frame_duration in frame_durations {
+        println!("{:?}", frame_duration);
+    }
 }
